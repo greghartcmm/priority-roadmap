@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 
 interface FileLoaderProps {
   onLoad: (buffer: ArrayBuffer, fileName: string) => void;
@@ -7,17 +7,31 @@ interface FileLoaderProps {
   sourceUrl?: string;
 }
 
+function guessFileNameFromUrl(url: string) {
+  try {
+    const u = new URL(url);
+    const fileParam = u.searchParams.get('file');
+    if (fileParam) return fileParam;
+  } catch {
+    // ignore
+  }
+  return 'https://mckessoncorp.sharepoint.com/:x:/r/sites/GRPProductCommercialLeadershipTeam/_layouts/15/Doc.aspx?sourcedoc=%7B940AC279-49B3-4839-B3A4-52847757824D%7D&file=FY27%20PLT%20Priorities.xlsx&action=default&mobileredirect=true&DefaultItemOpen=1';
+}
+
 export const FileLoader: React.FC<FileLoaderProps> = ({ onLoad, isLoading, error, sourceUrl }) => {
   const [dragOver, setDragOver] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [urlLoadError, setUrlLoadError] = useState<string | null>(null);
+  const [hasAutoLoaded, setHasAutoLoaded] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const processFile = useCallback(
     (file: File) => {
-      if (!file.name.match(/\.xlsx?$/i)) {
-        return;
-      }
+      if (!file.name.match(/\.xlsx?$/i)) return;
+
       setFileName(file.name);
+
       const reader = new FileReader();
       reader.onload = () => {
         if (reader.result instanceof ArrayBuffer) {
@@ -29,10 +43,62 @@ export const FileLoader: React.FC<FileLoaderProps> = ({ onLoad, isLoading, error
     [onLoad],
   );
 
+  const loadFromUrl = useCallback(
+    async (url: string) => {
+      setUrlLoadError(null);
+
+      // NOTE: SharePoint often requires auth cookies and may still block CORS.
+      // credentials: 'include' helps *if* the browser has a valid SP session cookie.
+      const res = await fetch(url, {
+        method: 'GET',
+        credentials: 'include',
+        redirect: 'follow',
+      });
+
+      if (!res.ok) {
+        throw new Error(`Failed to fetch: ${res.status} ${res.statusText}`);
+      }
+
+      // Defensive check: sometimes SharePoint returns HTML (login page) instead of XLSX.
+      const contentType = res.headers.get('content-type') || '';
+      const isProbablyHtml = contentType.includes('text/html');
+      if (isProbablyHtml) {
+        throw new Error(
+          'Got an HTML response instead of an Excel file (likely SharePoint login/CORS). Try downloading manually and uploading.',
+        );
+      }
+
+      const buffer = await res.arrayBuffer();
+      const name = guessFileNameFromUrl(url);
+
+      setFileName(name);
+      onLoad(buffer, name);
+    },
+    [onLoad],
+  );
+
+  // Auto-load once on mount if sourceUrl is provided
+  useEffect(() => {
+    if (!sourceUrl) return;
+    if (hasAutoLoaded) return;
+
+    setHasAutoLoaded(true);
+
+    // Only attempt auto-load if we aren't already loading from another source
+    if (!isLoading && !fileName) {
+      loadFromUrl(sourceUrl).catch((e) => {
+        console.error('Auto-load from URL failed:', e);
+        setUrlLoadError(e instanceof Error ? e.message : 'Failed to load file from URL');
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceUrl, hasAutoLoaded]);
+
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       setDragOver(false);
+
       const file = e.dataTransfer.files[0];
       if (file) processFile(file);
     },
@@ -57,10 +123,43 @@ export const FileLoader: React.FC<FileLoaderProps> = ({ onLoad, isLoading, error
     if (file) processFile(file);
   };
 
+  const handleLoadLatestClick = async () => {
+    if (!sourceUrl) return;
+    try {
+      await loadFromUrl(sourceUrl);
+    } catch (e) {
+      console.error('Manual URL load failed:', e);
+      setUrlLoadError(e instanceof Error ? e.message : 'Failed to load file from URL');
+    }
+  };
+
   return (
     <div className="file-loader">
+      {/* If auto-load fails, explain + offer retry */}
+      {sourceUrl && urlLoadError && (
+        <div className="error-banner">
+          <p>
+            <strong>Couldn’t load the spreadsheet automatically.</strong> {urlLoadError}
+          </p>
+          <p className="hint-text">
+            This is usually caused by SharePoint requiring sign-in or blocking cross-site downloads.
+            You can still download it manually and drop it below.
+          </p>
+          <button
+            type="button"
+            className="view-toggle-btn"
+            onClick={handleLoadLatestClick}
+            disabled={isLoading}
+          >
+            Try “Load from SharePoint” again
+          </button>
+        </div>
+      )}
+
       <div
-        className={`file-drop-zone${dragOver ? ' file-drop-zone--active' : ''}${isLoading ? ' file-drop-zone--disabled' : ''}`}
+        className={`file-drop-zone${dragOver ? ' file-drop-zone--active' : ''}${
+          isLoading ? ' file-drop-zone--disabled' : ''
+        }`}
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -95,17 +194,28 @@ export const FileLoader: React.FC<FileLoaderProps> = ({ onLoad, isLoading, error
 
       {sourceUrl && (
         <p className="file-source-hint">
-          Download the latest file from{' '}
+          Latest file:{' '}
           <a href={sourceUrl} target="_blank" rel="noopener noreferrer">
             SharePoint
           </a>
-          , then drop it above.
+          {' '}
+          <button
+            type="button"
+            className="view-toggle-btn"
+            onClick={handleLoadLatestClick}
+            disabled={isLoading}
+            style={{ marginLeft: 8 }}
+          >
+            Load from SharePoint
+          </button>
         </p>
       )}
 
       {error && (
         <div className="error-banner">
-          <p><strong>Error loading file:</strong> {error}</p>
+          <p>
+            <strong>Error loading file:</strong> {error}
+          </p>
           <p className="hint-text">
             Make sure the file is a valid .xlsx Excel file with a &ldquo;Product Initiatives&rdquo; sheet.
           </p>
