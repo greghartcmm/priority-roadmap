@@ -15,7 +15,7 @@ function guessFileNameFromUrl(url: string) {
   } catch {
     // ignore
   }
-  return 'https://mckessoncorp.sharepoint.com/:x:/r/sites/GRPProductCommercialLeadershipTeam/_layouts/15/Doc.aspx?sourcedoc=%7B940AC279-49B3-4839-B3A4-52847757824D%7D&file=FY27%20PLT%20Priorities.xlsx&action=download';
+  return 'https://mckessoncorp.sharepoint.com/:x:/r/sites/GRPProductCommercialLeadershipTeam/Shared%20Documents/PLT%20%26%20Engineering%20Prioritization/FY27%20PLT%20Priorities.xlsx?d=w940ac27949b34839b3a452847757824d&csf=1&web=1&e=aaP648';
 }
 
 export const FileLoader: React.FC<FileLoaderProps> = ({ onLoad, isLoading, error, sourceUrl }) => {
